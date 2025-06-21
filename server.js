@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const RouterOSClient = require('node-routeros').RouterOSClient;
 
 const app = express();
 const PORT = 5000;
@@ -13,11 +14,8 @@ app.use(cors());
 app.use(express.json());
 
 const DEVICES_FILE = path.join(__dirname, 'devices.json');
-const USERS_FILE = path.join(__dirname, 'users.json');         // For hotspot users
-const PPPOE_USERS_FILE = path.join(__dirname, 'pppoeUsers.json'); // For PPPoE users
-const PACKAGES_FILE = path.join(__dirname, 'packages.json');   // For packages
 
-// Helpers to load and save JSON files
+// Helpers to load and save JSON files (for devices)
 function loadJSON(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -25,13 +23,23 @@ function loadJSON(filePath) {
     return [];
   }
 }
-
 function saveJSON(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+// Helper to create MikroTik client dynamically
+function createMikrotikClient({ host, user, password, port = 8728 }) {
+  return new RouterOSClient({
+    host,
+    user,
+    password,
+    port,
+    timeout: 10000,
+  });
+}
+
 // ==============================
-// Device Routes
+// Device Routes (unchanged)
 // ==============================
 app.post('/api/devices/link', (req, res) => {
   const id = "test-device-001"; // hardcoded for now
@@ -64,7 +72,7 @@ app.get('/api/devices/register/:id', (req, res) => {
   device.connectedAt = new Date().toISOString();
   saveJSON(DEVICES_FILE, devices);
 
-   const script = `
+  const script = `
 
 # Create IP Pool for Hotspot Users
 /ip pool add name=madric-pool ranges=192.168.100.2-192.168.100.254
@@ -103,7 +111,6 @@ add name=firmware-update interval=1d on-event="/system package update install"
 
 `;
   console.log('Device registered:', device);
-
   console.log('Sending script:', script);
   res.type('text/plain').send(script);
 });
@@ -121,83 +128,227 @@ app.get('/api/devices/:id/status', (req, res) => {
 });
 
 // ==============================
-// User Management Routes
+// User Management Routes with dynamic MikroTik connection
 // ==============================
 
 // Get hotspot users
-app.get('/api/users/hotspot', (req, res) => {
-  const users = loadJSON(USERS_FILE);
-  res.json(users);
-});
+app.get('/api/users/hotspot', async (req, res) => {
+  const { host, user, password, port } = req.query;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
 
-// Get PPPoE users
-app.get('/api/users/pppoe', (req, res) => {
-  const users = loadJSON(PPPOE_USERS_FILE);
-  res.json(users);
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    const users = await conn.menu('/ip/hotspot/user').getAll();
+    await conn.close();
+
+    const formattedUsers = users.map(u => ({
+      username: u.name,
+      status: u.disabled === 'true' ? 'paused' : 'active',
+      profile: u.profile,
+      comment: u.comment || '',
+      uptime: u.uptime || 'N/A',
+    }));
+
+    res.json(formattedUsers);
+  } catch (error) {
+    console.error('MikroTik hotspot users error:', error);
+    res.status(500).json({ error: 'Failed to fetch hotspot users' });
+  }
 });
 
 // Pause hotspot user
-app.post('/api/users/hotspot/:username/pause', (req, res) => {
-  const users = loadJSON(USERS_FILE);
-  const user = users.find(u => u.username === req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+app.post('/api/users/hotspot/:username/pause', async (req, res) => {
+  const { host, user, password, port } = req.body;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
 
-  user.status = 'paused';
-  saveJSON(USERS_FILE, users);
-  res.json({ message: `User ${user.username} paused` });
+  const username = req.params.username;
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    // Disable user (pause)
+    const usersMenu = conn.menu('/ip/hotspot/user');
+    const userEntry = (await usersMenu.where({ name: username }))[0];
+    if (!userEntry) {
+      await conn.close();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await usersMenu.set(userEntry['.id'], { disabled: 'yes' });
+    await conn.close();
+
+    res.json({ message: `User ${username} paused` });
+  } catch (error) {
+    console.error('Pause hotspot user error:', error);
+    res.status(500).json({ error: 'Failed to pause user' });
+  }
 });
 
 // Resume hotspot user
-app.post('/api/users/hotspot/:username/resume', (req, res) => {
-  const users = loadJSON(USERS_FILE);
-  const user = users.find(u => u.username === req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+app.post('/api/users/hotspot/:username/resume', async (req, res) => {
+  const { host, user, password, port } = req.body;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
 
-  user.status = 'active';
-  saveJSON(USERS_FILE, users);
-  res.json({ message: `User ${user.username} resumed` });
+  const username = req.params.username;
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    // Enable user (resume)
+/* */
+    const usersMenu = conn.menu('/ip/hotspot/user');
+    const userEntry = (await usersMenu.where({ name: username }))[0];
+    if (!userEntry) {
+      await conn.close();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await usersMenu.set(userEntry['.id'], { disabled: 'no' });
+    await conn.close();
+
+    res.json({ message: `User ${username} resumed` });
+  } catch (error) {
+    console.error('Resume hotspot user error:', error);
+    res.status(500).json({ error: 'Failed to resume user' });
+  }
 });
 
 // Delete hotspot user
-app.delete('/api/users/hotspot/:username', (req, res) => {
-  let users = loadJSON(USERS_FILE);
-  const before = users.length;
-  users = users.filter(u => u.username !== req.params.username);
-  if (users.length === before) return res.status(404).json({ error: 'User not found' });
+app.delete('/api/users/hotspot/:username', async (req, res) => {
+  const { host, user, password, port } = req.body;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
 
-  saveJSON(USERS_FILE, users);
-  res.json({ message: `User ${req.params.username} deleted` });
+  const username = req.params.username;
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    const usersMenu = conn.menu('/ip/hotspot/user');
+    const userEntry = (await usersMenu.where({ name: username }))[0];
+    if (!userEntry) {
+      await conn.close();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await usersMenu.remove(userEntry['.id']);
+    await conn.close();
+
+    res.json({ message: `User ${username} deleted` });
+  } catch (error) {
+    console.error('Delete hotspot user error:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
 });
 
-// Repeat for PPPoE
-app.post('/api/users/pppoe/:username/pause', (req, res) => {
-  const users = loadJSON(PPPOE_USERS_FILE);
-  const user = users.find(u => u.username === req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+// Repeat similarly for PPPoE users
 
-  user.status = 'paused';
-  saveJSON(PPPOE_USERS_FILE, users);
-  res.json({ message: `PPPoE user ${user.username} paused` });
+// Get PPPoE users
+app.get('/api/users/pppoe', async (req, res) => {
+  const { host, user, password, port } = req.query;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
+
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    const users = await conn.menu('/ppp/secret').getAll();
+    await conn.close();
+
+    const formattedUsers = users.map(u => ({
+      username: u.name,
+      status: u.disabled === 'true' ? 'paused' : 'active',
+      profile: u.profile,
+      comment: u.comment || '',
+    }));
+
+    res.json(formattedUsers);
+  } catch (error) {
+    console.error('MikroTik PPPoE users error:', error);
+    res.status(500).json({ error: 'Failed to fetch PPPoE users' });
+  }
 });
 
-app.post('/api/users/pppoe/:username/resume', (req, res) => {
-  const users = loadJSON(PPPOE_USERS_FILE);
-  const user = users.find(u => u.username === req.params.username);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+// Pause PPPoE user
+app.post('/api/users/pppoe/:username/pause', async (req, res) => {
+  const { host, user, password, port } = req.body;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
 
-  user.status = 'active';
-  saveJSON(PPPOE_USERS_FILE, users);
-  res.json({ message: `PPPoE user ${user.username} resumed` });
+  const username = req.params.username;
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    const usersMenu = conn.menu('/ppp/secret');
+    const userEntry = (await usersMenu.where({ name: username }))[0];
+    if (!userEntry) {
+      await conn.close();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await usersMenu.set(userEntry['.id'], { disabled: 'yes' });
+    await conn.close();
+
+    res.json({ message: `PPPoE user ${username} paused` });
+  } catch (error) {
+    console.error('Pause PPPoE user error:', error);
+    res.status(500).json({ error: 'Failed to pause PPPoE user' });
+  }
 });
 
-app.delete('/api/users/pppoe/:username', (req, res) => {
-  let users = loadJSON(PPPOE_USERS_FILE);
-  const before = users.length;
-  users = users.filter(u => u.username !== req.params.username);
-  if (users.length === before) return res.status(404).json({ error: 'User not found' });
+// Resume PPPoE user
+app.post('/api/users/pppoe/:username/resume', async (req, res) => {
+  const { host, user, password, port } = req.body;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
 
-  saveJSON(PPPOE_USERS_FILE, users);
-  res.json({ message: `PPPoE user ${req.params.username} deleted` });
+  const username = req.params.username;
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    const usersMenu = conn.menu('/ppp/secret');
+    const userEntry = (await usersMenu.where({ name: username }))[0];
+    if (!userEntry) {
+      await conn.close();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await usersMenu.set(userEntry['.id'], { disabled: 'no' });
+    await conn.close();
+
+    res.json({ message: `PPPoE user ${username} resumed` });
+  } catch (error) {
+    console.error('Resume PPPoE user error:', error);
+    res.status(500).json({ error: 'Failed to resume PPPoE user' });
+  }
+});
+
+// Delete PPPoE user
+app.delete('/api/users/pppoe/:username', async (req, res) => {
+  const { host, user, password, port } = req.body;
+  if (!host || !user || !password) return res.status(400).json({ error: 'Missing MikroTik credentials' });
+
+  const username = req.params.username;
+  const conn = createMikrotikClient({ host, user, password, port });
+
+  try {
+    await conn.connect();
+    const usersMenu = conn.menu('/ppp/secret');
+    const userEntry = (await usersMenu.where({ name: username }))[0];
+    if (!userEntry) {
+      await conn.close();
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await usersMenu.remove(userEntry['.id']);
+    await conn.close();
+
+    res.json({ message: `PPPoE user ${username} deleted` });
+  } catch (error) {
+    console.error('Delete PPPoE user error:', error);
+    res.status(500).json({ error: 'Failed to delete PPPoE user' });
+  }
 });
 
 // ==============================
