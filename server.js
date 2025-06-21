@@ -5,28 +5,27 @@ const path = require('path');
 
 const app = express();
 const PORT = 5000;
-const BIND_ADDRESS = '0.0.0.0'; // Allows external devices (like MikroTik) to reach this server
+
+// Hardcoded base URL of your Render app
+const BASE_URL = 'https://wifi-uv2m.onrender.com';
 
 app.use(cors());
 app.use(express.json());
 
 const DEVICES_FILE = path.join(__dirname, 'devices.json');
 
-// Load devices.json or return empty array
 function loadDevices() {
   try {
-    return JSON.parse(fs.readFileSync(DEVICES_FILE, 'utf-8'));
+    return JSON.parse(fs.readFileSync(DEVICES_FILE));
   } catch {
     return [];
   }
 }
 
-// Save device data to devices.json
 function saveDevices(devices) {
   fs.writeFileSync(DEVICES_FILE, JSON.stringify(devices, null, 2));
 }
 
-// POST: Create new registration link (hardcoded for now)
 app.post('/api/devices/link', (req, res) => {
   const id = "test-device-001";
   const devices = loadDevices();
@@ -41,21 +40,17 @@ app.post('/api/devices/link', (req, res) => {
     saveDevices(devices);
   }
 
-  const registrationUrl = `http://192.168.206.1:${PORT}/api/devices/register/${id}`;
-  console.log(`Generated registration link: ${registrationUrl}`);
+  const registrationUrl = `${BASE_URL}/api/devices/register/${id}`;
   res.json({ id, registrationUrl });
 });
 
-// GET: MikroTik fetches script from this endpoint
 app.get('/api/devices/register/:id', (req, res) => {
   const { id } = req.params;
+  console.log(`Register called for device id: ${id}`);
+
   const devices = loadDevices();
   const device = devices.find(d => d.id === id);
-
-  if (!device) {
-    console.log(`❌ Registration attempt with invalid id: ${id}`);
-    return res.status(404).send('Invalid id');
-  }
+  if (!device) return res.status(404).send('Invalid id');
 
   device.status = 'connected';
   device.ip = req.ip;
@@ -70,20 +65,17 @@ app.get('/api/devices/register/:id', (req, res) => {
 /ip firewall filter add chain=input protocol=tcp dst-port=8291 action=accept comment="Allow Winbox"
 /tool snmp set enabled=yes`;
 
-  console.log(`✅ Register called for device id: ${id}`);
-  console.log('⬇️ Sending script:\n', script);
+  console.log('Sending script:', script);
   res.type('text/plain').send(script);
 });
 
-// Optional: Get device status
 app.get('/api/devices/:id/status', (req, res) => {
   const devices = loadDevices();
   const device = devices.find(d => d.id === req.params.id);
-  if (!device) return res.status(404).json({ error: 'Device not found' });
+  if (!device) return res.status(404).json({ error: 'Not found' });
   res.json(device);
 });
 
-// Start server
-app.listen(PORT, BIND_ADDRESS, () => {
-  console.log(`✅ Backend running at http://${BIND_ADDRESS}:${PORT}`);
+app.listen(PORT, () => {
+  console.log(`✅ Backend running at port ${PORT}`);
 });
