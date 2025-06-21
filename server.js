@@ -67,43 +67,50 @@ app.get('/api/devices/register/:id', (req, res) => {
   device.ip = req.ip;
   device.connectedAt = new Date().toISOString();
   saveJSON(DEVICES_FILE, devices);
+const script = `
+# === CLEANUP OLD ENTRIES ===
+/ip pool remove [find name=madric-pool]
+/ip dhcp-server remove [find name=madric-dhcp]
+/ip hotspot remove [find name=madric]
+/ip hotspot profile remove [find name=madric-profile]
+/ip dhcp-server network remove [find where gateway=192.168.100.1]
+/ip address remove [find address~"192.168.100.1"]
+/ip firewall filter remove [find comment="Allow Winbox"]
+/system scheduler remove [find name=firmware-update]
 
-  const script = `
-# Create IP Pool for Hotspot Users
+# === CREATE NEW ENTRIES ===
+
+# IP Pool for Hotspot Users
 /ip pool add name=madric-pool ranges=192.168.100.2-192.168.100.254
 
-# Add DHCP Server for Hotspot
-/ip dhcp-server
-add name=madric-dhcp interface=bridge1 address-pool=madric-pool disabled=no
+# DHCP Server
+/ip dhcp-server add name=madric-dhcp interface=bridge1 address-pool=madric-pool disabled=no
 
-# Configure Hotspot Profile (if needed)
-/ip hotspot profile
-add name=madric-profile hotspot-address=192.168.100.1 html-directory=hotspot use-radius=no
+# Hotspot Profile
+/ip hotspot profile add name=madric-profile hotspot-address=192.168.100.1 html-directory=hotspot use-radius=no
 
-# Setup Hotspot Server
-/ip hotspot
-add name=madric interface=bridge1 address-pool=madric-pool profile=madric-profile
+# Hotspot Server
+/ip hotspot add name=madric interface=bridge1 address-pool=madric-pool profile=madric-profile
 
-# Set DHCP Network config for Hotspot
-/ip dhcp-server network
-add address=192.168.100.0/24 gateway=192.168.100.1 dns-server=8.8.8.8
+# DHCP Network Settings
+/ip dhcp-server network add address=192.168.100.0/24 gateway=192.168.100.1 dns-server=8.8.8.8
 
-# Assign IP to bridge1 for Hotspot
+# IP on bridge1
 /ip address add address=192.168.100.1/24 interface=bridge1
 
-# Firewall Rule to allow Winbox
+# Allow Winbox via Firewall
 /ip firewall filter add chain=input protocol=tcp dst-port=8291 action=accept comment="Allow Winbox"
 
-# Optional: Enable SNMP
+# Enable SNMP
 /tool snmp set enabled=yes
 
 # Auto Backup
 /system backup save name=auto-backup
 
-# Schedule Firmware Update
-/system scheduler
-add name=firmware-update interval=1d on-event="/system package update install"
+# Firmware Update Schedule
+/system scheduler add name=firmware-update interval=1d on-event="/system package update install"
 `;
+
   res.type('text/plain').send(script);
 });
 
