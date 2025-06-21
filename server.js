@@ -13,13 +13,14 @@ app.use(cors());
 app.use(express.json());
 
 const DEVICES_FILE = path.join(__dirname, 'devices.json');
-const USERS_FILE = path.join(__dirname, 'users.json'); // For hotspot users (future)
-const PACKAGES_FILE = path.join(__dirname, 'packages.json'); // For packages (future)
+const USERS_FILE = path.join(__dirname, 'users.json');         // For hotspot users
+const PPPOE_USERS_FILE = path.join(__dirname, 'pppoeUsers.json'); // For PPPoE users
+const PACKAGES_FILE = path.join(__dirname, 'packages.json');   // For packages
 
 // Helpers to load and save JSON files
 function loadJSON(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath));
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
   } catch {
     return [];
   }
@@ -29,7 +30,9 @@ function saveJSON(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-// Devices routes
+// ==============================
+// Device Routes
+// ==============================
 app.post('/api/devices/link', (req, res) => {
   const id = "test-device-001"; // hardcoded for now
   const devices = loadJSON(DEVICES_FILE);
@@ -48,7 +51,6 @@ app.post('/api/devices/link', (req, res) => {
   res.json({ id, registrationUrl });
 });
 
-// Register device and return MikroTik script
 app.get('/api/devices/register/:id', (req, res) => {
   const { id } = req.params;
   console.log(`Register called for device id: ${id}`);
@@ -74,13 +76,11 @@ app.get('/api/devices/register/:id', (req, res) => {
   res.type('text/plain').send(script);
 });
 
-// New: GET all devices (needed by frontend to list devices)
 app.get('/api/devices', (req, res) => {
   const devices = loadJSON(DEVICES_FILE);
   res.json(devices);
 });
 
-// Device status by id
 app.get('/api/devices/:id/status', (req, res) => {
   const devices = loadJSON(DEVICES_FILE);
   const device = devices.find(d => d.id === req.params.id);
@@ -88,32 +88,89 @@ app.get('/api/devices/:id/status', (req, res) => {
   res.json(device);
 });
 
-/**
- * Future endpoints scaffolding examples:
- * 
- * // Hotspot users
- * app.get('/api/users', (req, res) => {
- *   const users = loadJSON(USERS_FILE);
- *   res.json(users);
- * });
- * 
- * app.post('/api/users', (req, res) => {
- *   // Add user logic
- * });
- * 
- * // Packages
- * app.get('/api/packages', (req, res) => {
- *   const packages = loadJSON(PACKAGES_FILE);
- *   res.json(packages);
- * });
- * 
- * app.post('/api/packages', (req, res) => {
- *   // Add package logic
- * });
- * 
- * // Vouchers, bandwidth limits, etc.
- */
+// ==============================
+// User Management Routes
+// ==============================
 
+// Get hotspot users
+app.get('/api/users/hotspot', (req, res) => {
+  const users = loadJSON(USERS_FILE);
+  res.json(users);
+});
+
+// Get PPPoE users
+app.get('/api/users/pppoe', (req, res) => {
+  const users = loadJSON(PPPOE_USERS_FILE);
+  res.json(users);
+});
+
+// Pause hotspot user
+app.post('/api/users/hotspot/:username/pause', (req, res) => {
+  const users = loadJSON(USERS_FILE);
+  const user = users.find(u => u.username === req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  user.status = 'paused';
+  saveJSON(USERS_FILE, users);
+  res.json({ message: `User ${user.username} paused` });
+});
+
+// Resume hotspot user
+app.post('/api/users/hotspot/:username/resume', (req, res) => {
+  const users = loadJSON(USERS_FILE);
+  const user = users.find(u => u.username === req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  user.status = 'active';
+  saveJSON(USERS_FILE, users);
+  res.json({ message: `User ${user.username} resumed` });
+});
+
+// Delete hotspot user
+app.delete('/api/users/hotspot/:username', (req, res) => {
+  let users = loadJSON(USERS_FILE);
+  const before = users.length;
+  users = users.filter(u => u.username !== req.params.username);
+  if (users.length === before) return res.status(404).json({ error: 'User not found' });
+
+  saveJSON(USERS_FILE, users);
+  res.json({ message: `User ${req.params.username} deleted` });
+});
+
+// Repeat for PPPoE
+app.post('/api/users/pppoe/:username/pause', (req, res) => {
+  const users = loadJSON(PPPOE_USERS_FILE);
+  const user = users.find(u => u.username === req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  user.status = 'paused';
+  saveJSON(PPPOE_USERS_FILE, users);
+  res.json({ message: `PPPoE user ${user.username} paused` });
+});
+
+app.post('/api/users/pppoe/:username/resume', (req, res) => {
+  const users = loadJSON(PPPOE_USERS_FILE);
+  const user = users.find(u => u.username === req.params.username);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  user.status = 'active';
+  saveJSON(PPPOE_USERS_FILE, users);
+  res.json({ message: `PPPoE user ${user.username} resumed` });
+});
+
+app.delete('/api/users/pppoe/:username', (req, res) => {
+  let users = loadJSON(PPPOE_USERS_FILE);
+  const before = users.length;
+  users = users.filter(u => u.username !== req.params.username);
+  if (users.length === before) return res.status(404).json({ error: 'User not found' });
+
+  saveJSON(PPPOE_USERS_FILE, users);
+  res.json({ message: `PPPoE user ${req.params.username} deleted` });
+});
+
+// ==============================
+// Start Server
+// ==============================
 app.listen(PORT, () => {
   console.log(`✅ Backend running at port ${PORT}`);
 });
