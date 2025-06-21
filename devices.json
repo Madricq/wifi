@@ -1,0 +1,51 @@
+[
+  {
+    "id": "6a268119-6082-4218-bfd8-c0f98c0a4180",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T16:02:34.044Z"
+  },
+  {
+    "id": "6ae2b3d3-9961-4767-aead-06fe8b2337dc",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T16:04:11.428Z"
+  },
+  {
+    "id": "fa877b10-95eb-4266-9abd-ca7a7a28be5e",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T16:04:15.403Z"
+  },
+  {
+    "id": "16e62c5d-415f-4900-95a2-746ba67be677",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T16:19:08.461Z"
+  },
+  {
+    "id": "962205af-e475-48db-b7f3-6876ddb3df48",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T16:43:10.572Z"
+  },
+  {
+    "id": "e3545361-c4a4-4388-b0e2-b0bd7b8258c8",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T17:02:43.806Z"
+  },
+  {
+    "id": "e7e4ecc7-b95a-4d09-93d0-bcc00a7ea90b",
+    "status": "pending",
+    "ip": null,
+    "createdAt": "2025-06-19T17:11:21.200Z"
+  },
+  {
+    "id": "test-device-001",
+    "status": "connected",
+    "ip": "::ffff:192.168.88.1",
+    "createdAt": "2025-06-19T17:23:10.721Z",
+    "connectedAt": "2025-06-19T17:35:41.321Z"
+  }
+]
