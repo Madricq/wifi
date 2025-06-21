@@ -64,13 +64,45 @@ app.get('/api/devices/register/:id', (req, res) => {
   device.connectedAt = new Date().toISOString();
   saveJSON(DEVICES_FILE, devices);
 
-  const script = `/ip pool add name=hs-pool ranges=192.168.10.2-192.168.10.254
-/ip dhcp-server add name=hs-dhcp interface=bridge1 address-pool=hs-pool disabled=no
-/ip hotspot add name=hotspot1 interface=bridge1 address-pool=hs-pool profile=default
-/system scheduler add name=firmware-update interval=1d on-event="/system package update install"
-/system backup save name=auto-backup
+   const script = `
+
+# Create IP Pool for Hotspot Users
+/ip pool add name=madric-pool ranges=192.168.100.2-192.168.100.254
+
+# Add DHCP Server for Hotspot
+/ip dhcp-server
+add name=madric-dhcp interface=bridge1 address-pool=madric-pool disabled=no
+
+# Configure Hotspot Profile (if needed)
+/ip hotspot profile
+add name=madric-profile hotspot-address=192.168.100.1 html-directory=hotspot use-radius=no
+
+# Setup Hotspot Server
+/ip hotspot
+add name=madric interface=bridge1 address-pool=madric-pool profile=madric-profile
+
+# Set DHCP Network config for Hotspot
+/ip dhcp-server network
+add address=192.168.100.0/24 gateway=192.168.100.1 dns-server=8.8.8.8
+
+# Assign IP to bridge1 for Hotspot
+/ip address add address=192.168.100.1/24 interface=bridge1
+
+# Firewall Rule to allow Winbox
 /ip firewall filter add chain=input protocol=tcp dst-port=8291 action=accept comment="Allow Winbox"
-/tool snmp set enabled=yes`;
+
+# Optional: Enable SNMP
+/tool snmp set enabled=yes
+
+# Auto Backup
+/system backup save name=auto-backup
+
+# Schedule Firmware Update
+/system scheduler
+add name=firmware-update interval=1d on-event="/system package update install"
+
+`;
+  console.log('Device registered:', device);
 
   console.log('Sending script:', script);
   res.type('text/plain').send(script);
