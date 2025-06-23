@@ -1,123 +1,131 @@
+require('dotenv').config();
 const express = require('express');
+const axios = require('axios');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const RouterOSClient = require('node-routeros').RouterOSClient;
 
 const app = express();
-const PORT = 5000;
-
-const MIKROTIK_CONFIG = {
-  host: '192.168.88.1',
-  user: 'admin',
-  password: '0785151142',
-  port: 8728,
-  mac: '4C:5E:0C:B7:DC:DD'
-};
+const PORT = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
 
-const DEVICES_FILE = path.join(__dirname, 'devices.json');
-
-function loadJSON(filePath) {
+// ✅ Get Access Token from IoTech
+async function getAccessToken() {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch {
-    return [];
+    const params = new URLSearchParams();
+    params.append('client_id', process.env.ClientId);
+    params.append('client_secret', process.env.ClientSecret);
+    params.append('grant_type', 'client_credentials');
+
+    const response = await axios.post(
+      'https://id.iotec.io/connect/token',
+      params,
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }
+    );
+
+    return response.data.access_token;
+  } catch (err) {
+    console.error('❌ Error getting access token:', err.response?.data || err.message);
+    throw err;
   }
 }
-function saveJSON(filePath, data) {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-}
 
-function createMikrotikClient() {
-  const { host, user, password, port } = MIKROTIK_CONFIG;
-  return new RouterOSClient({ host, user, password, port, timeout: 10000 });
-}
-
-app.post('/api/devices/link', (req, res) => {
-  const id = "test-device-001";
-  const devices = loadJSON(DEVICES_FILE);
-
-  if (!devices.some(d => d.id === id)) {
-    devices.push({
-      id,
-      status: 'pending',
-      ip: null,
-      createdAt: new Date().toISOString(),
-    });
-    saveJSON(DEVICES_FILE, devices);
-  }
-
-  const registrationUrl = `https://wifi-uv2m.onrender.com/api/devices/register/${id}`;
-  res.json({ id, registrationUrl });
-});
-
-app.get('/api/devices/register/:id', async (req, res) => {
-  const { id } = req.params;
-  const devices = loadJSON(DEVICES_FILE);
-  const device = devices.find(d => d.id === id);
-  if (!device) return res.status(404).send('Invalid id');
-
-  device.status = 'connected';
-  device.ip = req.ip;
-  device.connectedAt = new Date().toISOString();
-  saveJSON(DEVICES_FILE, devices);
-
-  const script = `
-/ip pool remove [find name=madric-pool]
-/ip dhcp-server remove [find name=madric-dhcp]
-/ip hotspot remove [find name=madric]
-/ip hotspot profile remove [find name=madric-profile]
-/ip dhcp-server network remove [find where gateway=192.168.100.1]
-/ip address remove [find address~"192.168.100.1"]
-/ip firewall filter remove [find comment="Allow Winbox"]
-/system scheduler remove [find name=firmware-update]
-/ip pool add name=madric-pool ranges=192.168.100.2-192.168.100.254
-/ip dhcp-server add name=madric-dhcp interface=bridge1 address-pool=madric-pool disabled=no
-/ip hotspot profile add name=madric-profile hotspot-address=192.168.100.1 html-directory=hotspot use-radius=no
-/ip hotspot add name=madric interface=bridge1 address-pool=madric-pool profile=madric-profile
-/ip dhcp-server network add address=192.168.100.0/24 gateway=192.168.100.1 dns-server=8.8.8.8
-/ip address add address=192.168.100.1/24 interface=bridge1
-/ip firewall filter add chain=input protocol=tcp dst-port=8291 action=accept comment="Allow Winbox"
-/tool snmp set enabled=yes
-/system backup save name=auto-backup
-/system scheduler add name=firmware-update interval=1d on-event="/system package update install"
-`;
-
-  const conn = createMikrotikClient();
+// ✅ POST /collect
+app.post('/collect', async (req, res) => {
   try {
-    await conn.connect();
-    const commands = script.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+    const { phoneNumber, amount } = req.body;
 
-    for (const cmd of commands) {
-      await conn.write(cmd);
+    if (!phoneNumber || !amount) {
+      return res.status(400).json({ message: 'phoneNumber and amount are required' });
     }
-    await conn.close();
-  } catch (e) {
-    console.error('Failed to apply MikroTik setup:', e);
+
+    const accessToken = await getAccessToken();
+
+    const data = {
+      category: "MobileMoney",
+      currency: "UGX",
+      walletId: process.env.LiveWalletID,
+      externalId: `order_${Date.now()}`,
+      payer: phoneNumber,
+      payerNote: "Payment for order",
+      amount: amount,
+      payeeNote: "Thank you for your payment",
+      channel: null,
+      transactionChargesCategory: "ChargeWallet"
+    };
+
+    console.log("📤 Final Payload to IoTech (/collect):", JSON.stringify(data, null, 2));
+
+    const response = await axios.post(
+      'https://pay.iotec.io/api/collections/collect',
+      data,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    res.json({
+      message: `✅ Payment request sent to ${phoneNumber}`,
+      result: response.data
+    });
+  } catch (err) {
+    console.error('❌ Payment error (/collect):', err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data || err.message });
+  }
+});
+
+// ✅ POST /api/pay - Used by your React frontend
+app.post('/api/pay', async (req, res) => {
+  const { phone, packageName, amount } = req.body;
+
+  if (!phone || !packageName || !amount) {
+    return res.status(400).json({ success: false, message: 'phone, packageName, and amount are required' });
   }
 
-  res.type('text/plain').send(script);
-});
+  try {
+    const accessToken = await getAccessToken();
 
-app.get('/api/devices', (req, res) => {
-  const devices = loadJSON(DEVICES_FILE);
-  res.json(devices);
-});
+    const paymentPayload = {
+      category: 'MobileMoney',
+      currency: 'UGX',
+      walletId: process.env.LiveWalletID,
+      externalId: `order_${Date.now()}`,
+      payer: phone,
+      payerNote: `Payment for ${packageName}`,
+      amount,
+      payeeNote: `Payment for package ${packageName}`,
+      channel: null,
+      transactionChargesCategory: 'ChargeWallet'
+    };
 
-app.get('/api/devices/:id/status', (req, res) => {
-  const devices = loadJSON(DEVICES_FILE);
-  const device = devices.find(d => d.id === req.params.id);
-  if (!device) return res.status(404).json({ error: 'Not found' });
-  res.json(device);
-});
+    console.log("📤 Payload to IoTech (/api/pay):", paymentPayload);
 
-// Keep rest of CRUD logic for hotspot, pppoe, profiles unchanged
-// Your full CRUD routes are assumed to follow here as before...
+    const payment = await axios.post(
+      'https://pay.iotec.io/api/collections/collect',
+      paymentPayload,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    res.status(200).json({ success: true, data: payment.data });
+  } catch (err) {
+    console.error('❌ /api/pay error:', err.response?.data || err.message);
+    res.status(500).json({
+      success: false,
+      message: err?.response?.data?.message || 'Payment failed',
+    });
+  }
+});
 
 app.listen(PORT, () => {
-  console.log(`✅ Backend running at port ${PORT}`);
-  console.log(`Using MikroTik credentials: user=${MIKROTIK_CONFIG.user} mac=${MIKROTIK_CONFIG.mac}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
