@@ -14,6 +14,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "routeros-client": "^latest_version",
     "node-routeros": "^1.0.3",
     "fs": "^0.0.1-security",
     "uuid": "^11.1.0"
