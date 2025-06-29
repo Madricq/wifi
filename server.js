@@ -3,7 +3,6 @@ const cors = require('cors');
 const { RouterOSClient } = require('node-routeros');
 const mongoose = require('mongoose');
 const moment = require('moment');
-require('dotenv').config();
 
 const app = express();
 const PORT = 5000;
@@ -11,12 +10,15 @@ const PORT = 5000;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/mikrotik', {
+// ✅ Direct MongoDB Atlas connection
+mongoose.connect('mongodb+srv://madricquavo91:gFmQsG4LJf4Pxq9u@cluster0.q8wgfwy.mongodb.net/captiveportalengine', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-});
+})
+.then(() => console.log('✅ Connected to MongoDB Atlas'))
+.catch((err) => console.error('❌ MongoDB connection error:', err));
 
+// Voucher Schema
 const VoucherSchema = new mongoose.Schema({
   code: String,
   amount: Number,
@@ -25,7 +27,6 @@ const VoucherSchema = new mongoose.Schema({
   usedAt: Date,
   usedBy: String,
 });
-
 const Voucher = mongoose.model('Voucher', VoucherSchema);
 
 // MikroTik config
@@ -37,16 +38,10 @@ const MIKROTIK_CONFIG = {
 };
 
 function createMikrotikClient() {
-  return new RouterOSClient({
-    host: MIKROTIK_CONFIG.host,
-    user: MIKROTIK_CONFIG.user,
-    password: MIKROTIK_CONFIG.password,
-    port: MIKROTIK_CONFIG.port,
-    timeout: 10000,
-  });
+  return new RouterOSClient({ ...MIKROTIK_CONFIG, timeout: 10000 });
 }
 
-// 🔐 Redeem voucher
+// 🔐 Redeem Voucher
 app.post('/api/redeem', async (req, res) => {
   const { code, mac } = req.body;
 
@@ -68,7 +63,7 @@ app.post('/api/redeem', async (req, res) => {
   }
 });
 
-// ✅ MikroTik checks MAC with duration control
+// 🔍 Check MAC validity
 app.get('/api/check', async (req, res) => {
   const { mac } = req.query;
   if (!mac) return res.status(400).json({ allow: false, message: 'MAC required' });
@@ -94,15 +89,12 @@ app.get('/api/check', async (req, res) => {
   }
 });
 
-// 🔧 MikroTik setup script generator
+// 🔧 Generate MikroTik setup script
 app.get('/api/devices/register/:id', async (req, res) => {
   const script = `
-# === (OPTIONAL) CREATE BRIDGE IF MISSING ===
 /interface bridge add name=bridge1
 /interface bridge port add bridge=bridge1 interface=ether2
 /interface bridge port add bridge=bridge1 interface=wlan1
-
-# === CLEAN OLD CONFIGS ===
 /ip pool remove [find name=hotspot-pool]
 /ip dhcp-server remove [find name=hotspot-dhcp]
 /ip hotspot remove [find name=hotspot1]
@@ -110,26 +102,14 @@ app.get('/api/devices/register/:id', async (req, res) => {
 /ip address remove [find address~"192.168.100."]
 /ip dhcp-server network remove [find address~"192.168.100."]
 /ip firewall nat remove [find comment="hotspot-nat"]
-
-# === IP POOL & ADDRESS ===
 /ip pool add name=hotspot-pool ranges=192.168.100.10-192.168.100.254
 /ip address add address=192.168.100.1/24 interface=bridge1 comment="Hotspot Gateway"
-
-# === DHCP SERVER ===
 /ip dhcp-server add name=hotspot-dhcp interface=bridge1 address-pool=hotspot-pool disabled=no
 /ip dhcp-server network add address=192.168.100.0/24 gateway=192.168.100.1 dns-server=8.8.8.8
-
-# === HOTSPOT SETUP ===
 /ip hotspot profile add name=hotspot-profile hotspot-address=192.168.100.1 html-directory=hotspot use-radius=no
 /ip hotspot add name=hotspot1 interface=bridge1 address-pool=hotspot-pool profile=hotspot-profile
-
-# === ENABLE DNS ===
 /ip dns set servers=8.8.8.8 allow-remote-requests=yes
-
-# === ENABLE NAT FOR INTERNET ACCESS ===
 /ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment="hotspot-nat"
-
-# === DONE ===
 :put "✅ Hotspot setup complete!"
 `;
 
@@ -141,6 +121,7 @@ app.get('/api/devices/register/:id', async (req, res) => {
     for (const cmd of commands) {
       await conn.write(cmd);
     }
+
     await conn.close();
   } catch (e) {
     console.error('MikroTik script error:', e);
